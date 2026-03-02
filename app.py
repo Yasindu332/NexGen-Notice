@@ -1,9 +1,15 @@
 from flask import Flask, request, render_template_string, redirect, url_for, g
 import sqlite3
 import uuid
+import os
 
 app = Flask(__name__)
-DATABASE = 'database.db'
+
+# Vercel එකේ නම් /tmp ෆෝල්ඩර් එකේ සේව් කරන්න, නැත්නම් සාමාන්‍ය විදියට
+if os.environ.get('VERCEL'):
+    DATABASE = '/tmp/database.db'
+else:
+    DATABASE = 'database.db'
 
 # --- Database Setup ---
 
@@ -11,7 +17,7 @@ def get_db():
     db = getattr(g, '_database', None)
     if db is None:
         db = g._database = sqlite3.connect(DATABASE)
-        db.row_factory = sqlite3.Row # දත්ත Dictionary එකක් වගේ ගන්න
+        db.row_factory = sqlite3.Row
     return db
 
 @app.teardown_appcontext
@@ -20,18 +26,21 @@ def close_connection(exception):
     if db is not None:
         db.close()
 
-# Table එක මුලින්ම හදාගන්න කොටස
 def init_db():
-    with app.app_context():
-        db = get_db()
-        db.execute('''
-            CREATE TABLE IF NOT EXISTS posts (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL
-            )
-        ''')
-        db.commit()
+    db = get_db()
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS posts (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL
+        )
+    ''')
+    db.commit()
+
+# Vercel එකේ හැම රික්වෙස්ට් එකකටම කලින් Database Table එක තියෙනවද කියලා බලනවා
+@app.before_request
+def before_request():
+    init_db()
 
 # --- HTML Templates ---
 
@@ -56,6 +65,8 @@ HOME_HTML = '''
                 - <a href="/edit/{{ post['id'] }}" style="color: green;">Edit</a> 
                 - <a href="/delete/{{ post['id'] }}" style="color: red;">Delete</a>
             </li>
+        {% else %}
+            <p>තාම පොස්ට් මුකුත් නැහැ!</p>
         {% endfor %}
     </ul>
 </body>
@@ -101,13 +112,10 @@ def home():
         title = request.form['title']
         content = request.form['content']
         post_id = str(uuid.uuid4())[:8] 
-        
-        # දත්ත Database එකට ඇතුලත් කිරීම
         db.execute('INSERT INTO posts (id, title, content) VALUES (?, ?, ?)', (post_id, title, content))
         db.commit()
         return redirect(url_for('home'))
     
-    # Database එකෙන් දත්ත ගැනීම
     posts = db.execute('SELECT * FROM posts').fetchall()
     return render_template_string(HOME_HTML, posts=posts)
 
@@ -128,7 +136,6 @@ def edit_post(post_id):
     if request.method == 'POST':
         title = request.form['title']
         content = request.form['content']
-        # Database එකේ දත්ත Update කිරීම
         db.execute('UPDATE posts SET title = ?, content = ? WHERE id = ?', (title, content, post_id))
         db.commit()
         return redirect(url_for('home'))
@@ -138,11 +145,12 @@ def edit_post(post_id):
 @app.route('/delete/<post_id>')
 def delete_post(post_id):
     db = get_db()
-    # Database එකෙන් දත්ත Delete කිරීම
     db.execute('DELETE FROM posts WHERE id = ?', (post_id,))
     db.commit()
     return redirect(url_for('home'))
 
 if __name__ == '__main__':
-    init_db() # App එක රන් වෙද්දි මුලින්ම Database එක හදනවා
+    # Local රන් කරද්දී මුලින්ම Database එක හදනවා
+    with app.app_context():
+        init_db() 
     app.run(debug=True)
